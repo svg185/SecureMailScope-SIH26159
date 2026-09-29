@@ -1,0 +1,4 @@
+# Optional external AI provider
+# Install this only when using SMS_AI_PROVIDER=gemini
+# google-genai>=1,<2
+google-genai>=1,<2

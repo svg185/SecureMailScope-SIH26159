@@ -1,0 +1,7 @@
+fastapi>=0.128,<0.129
+uvicorn[standard]>=0.48,<0.49
+python-multipart>=0.0.20,<0.1
+cryptography>=46,<51
+reportlab>=4.4,<5
+scikit-learn>=1.9,<2
+numpy>=2.3,<3

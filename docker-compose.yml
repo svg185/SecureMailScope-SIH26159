@@ -1,0 +1,9 @@
+services:
+  securemailscope:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage:/app/storage
+      - ./reports:/app/reports
+    restart: unless-stopped
