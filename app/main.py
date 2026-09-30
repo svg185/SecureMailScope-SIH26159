@@ -273,7 +273,7 @@ async def upload(file: UploadFile = File(...)) -> JSONResponse:
             raise HTTPException(422, str(exc)) from exc
         result = normalized_result(
             f"SMS-PCAP-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}",
-            parsed["sessions"], "REAL_PCAP_TSHARK", name,
+            parsed["sessions"], parsed["mode"], name,
             {k: v for k, v in parsed.items() if k != "sessions"},
         )
     audit = save_scan(result)

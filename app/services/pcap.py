@@ -69,6 +69,70 @@ def _run_tshark(path: Path) -> list[dict[str, str]]:
     return records
 
 
+def _run_scapy(path: Path) -> list[dict[str, str]]:
+    from scapy.layers.inet import IP, TCP
+    from scapy.layers.inet6 import IPv6
+    from scapy.layers.l2 import Ether
+    from scapy.layers.tls.record import TLS
+    from scapy.utils import PcapReader
+
+    records: list[dict[str, str]] = []
+    stream_ids: dict[tuple[tuple[str, int], tuple[str, int]], int] = {}
+    with PcapReader(str(path)) as packets:
+        for frame_number, raw_packet in enumerate(packets, start=1):
+            record = {"frame.number": str(frame_number), "frame.time_epoch": str(float(raw_packet.time))}
+            raw_bytes = bytes(raw_packet)
+            try:
+                packet = Ether(raw_bytes)
+                if not packet.haslayer(IP) and not packet.haslayer(IPv6) and raw_bytes:
+                    ip_version = raw_bytes[0] >> 4
+                    if ip_version == 4:
+                        packet = IP(raw_bytes)
+                    elif ip_version == 6:
+                        packet = IPv6(raw_bytes)
+            except Exception:
+                records.append(record)
+                continue
+
+            if not packet.haslayer(TCP) or not (packet.haslayer(IP) or packet.haslayer(IPv6)):
+                records.append(record)
+                continue
+
+            network = packet[IP] if packet.haslayer(IP) else packet[IPv6]
+            tcp = packet[TCP]
+            source = (str(network.src), int(tcp.sport))
+            destination = (str(network.dst), int(tcp.dport))
+            flow = tuple(sorted((source, destination)))
+            stream_id = stream_ids.setdefault(flow, len(stream_ids))
+            payload = bytes(tcp.payload)
+            record.update({
+                "ip.src": source[0],
+                "ip.dst": destination[0],
+                "tcp.srcport": str(source[1]),
+                "tcp.dstport": str(destination[1]),
+                "tcp.stream": str(stream_id),
+                "tcp.payload": payload.hex(),
+            })
+
+            if len(payload) >= 5 and payload[0] == 22 and payload[1] == 3:
+                try:
+                    tls = TLS(payload)
+                    messages = tls.msg if isinstance(tls.msg, list) else [tls.msg]
+                    for message in messages:
+                        if type(message).__name__ == "TLSServerHello":
+                            version = int(message.version)
+                            cipher = int(message.cipher)
+                            if cipher in {0x1301, 0x1302, 0x1303}:
+                                version = 772
+                            record["tls.handshake.version"] = str(version)
+                            record["tls.handshake.ciphersuite"] = f"0x{cipher:04x}"
+                except Exception:
+                    pass
+
+            records.append(record)
+    return records
+
+
 def _map_version(v: str | None) -> str:
     if not v:
         return "UNKNOWN"
@@ -178,7 +242,14 @@ def _tls_records(records: list[dict[str, str]]) -> list[dict[str, Any]]:
 
 def analyze_pcap(path: str | Path) -> dict[str, Any]:
     p = Path(path)
-    records = _run_tshark(p)
+    if shutil.which("tshark"):
+        records = _run_tshark(p)
+        parser = "TShark"
+        mode = "REAL_PCAP_TSHARK"
+    else:
+        records = _run_scapy(p)
+        parser = "Scapy fallback (certificate details may be limited)"
+        mode = "REAL_PCAP_SCAPY"
     sessions = _tls_records(records)
     if not sessions:
         raise RuntimeError("No SMTP/IMAP/POP3 TCP sessions were found in the capture.")
@@ -186,7 +257,7 @@ def analyze_pcap(path: str | Path) -> dict[str, Any]:
         "packet_count": len(records),
         "tcp_streams": len({r.get('tcp.stream') for r in records if r.get('tcp.stream')}),
         "sessions": sessions,
-        "mode": "REAL_PCAP_TSHARK",
-        "parser": "TShark",
+        "mode": mode,
+        "parser": parser,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
